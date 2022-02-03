@@ -185,3 +185,42 @@ main {
 .weather-emoji {
   font-size: 30px;
 }
+
+/* MEDIA QUERY FOR SMALLER DESKTOP SCREENS AND SMALLER */
+
+@media screen and (max-width: 980px) {
+  #search-box h2 {
+    font-size: 2.5vw;
+  }
+}
+
+/* MEDIA QUERY FOR TABLETS AND SMALLER */
+
+@media screen and (max-width: 768px) {
+  .forecast-card {
+    min-width: 125px;
+  }
+
+  .forecast-text {
+    font-size: 15px;
+  }
+}
+
+/* MEDIA QUERY FOR MOBILE PHONES AND SMALLER */
+
+@media screen and (max-width: 575px) {
+  #search-box h2 {
+    font-size: 5vw;
+  }
+  #search-section {
+    width: 100%;
+  }
+  #weather-section {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    flex-wrap: wrap;
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+}
