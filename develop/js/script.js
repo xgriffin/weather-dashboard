@@ -24,26 +24,39 @@ var getFetch = function (apiUrl) {
         var lon = parseFloat(data.coord.lon);
         var lat = parseFloat(data.coord.lat);
         var apiUrl2 =
-          "https://api.openweathermap.org/data/2.5/onecall?lat=" +
+          "https://api.openweathermap.org/data/2.5/forecast?lat=" + // Second fetch url to get the 5 day forecast
           lat +
           "&lon=" +
           lon +
-          "&exclude=hourly,minutely" +
-          "&appid=ffa748d3a02711314373a2d30887317c" + // Second fetch url to get the daily forecast
+          "&appid=ffa748d3a02711314373a2d30887317c" +
           "&units=imperial"; // returns the temp in f not kelvin
-        fetch(apiUrl2).then(function (response2) {
-          if (response2.ok) {
-            response2.json().then(function (data2) {
-              currentTime = moment(); // reset the date, otherwise it will constantly increment
-              makeCityBox(data, data2);
-              makeForecast(data, data2);
-              addHistory(data.name);
-              saveHistory();
-            });
-          } else {
-            console.log("Error: Location not found");
-          }
-        });
+        var uvUrl =
+          "https://api.open-meteo.com/v1/forecast?latitude=" + // Third fetch url to get the uv index
+          lat +
+          "&longitude=" +
+          lon +
+          "&current=uv_index";
+        Promise.all([fetch(apiUrl2), fetch(uvUrl)])
+          .then(function (responses) {
+            if (!responses[0].ok) {
+              throw new Error("Forecast not found");
+            }
+            return Promise.all([
+              responses[0].json(),
+              responses[1].ok ? responses[1].json() : null, // the uv index is optional
+            ]);
+          })
+          .then(function (results) {
+            var uv = results[1] ? results[1].current.uv_index : null;
+            makeCityBox(data, uv);
+            makeForecast(data, results[0]);
+            addHistory(data.name);
+            saveHistory();
+          })
+          .catch(function (error) {
+            console.log("Error: " + error.message);
+            alert("Error: Could not load the forecast");
+          });
       });
     } else {
       alert("Error: City not found");
@@ -108,7 +121,12 @@ var loadHistory = function () {
   }
 };
 
-var makeCityBox = function (data, data2) {
+var getLocalTime = function (seconds, offset) {
+  // returns a moment in the city's timezone, offset is in seconds from utc
+  return moment.unix(seconds).utcOffset(offset / 60);
+};
+
+var makeCityBox = function (data, uv) {
   // Creates the city weather box and adds it to the page
   var favorable = 2;
   var moderate = 5;
@@ -122,9 +140,9 @@ var makeCityBox = function (data, data2) {
   temph2.html(
     data.name + // city name
       " (" +
-      currentTime.tz(data2.timezone).format("MM/DD/YYYY") + // Gets the date in the locations timezone
+      getLocalTime(data.dt, data.timezone).format("MM/DD/YYYY") + // Gets the date in the locations timezone
       ") " +
-      getIcon(data2.daily[0].weather[0].icon)
+      getIcon(data.weather[0].icon)
   ); // get the current weather emoji
   tempp.html(
     "Temp: " +
@@ -141,22 +159,47 @@ var makeCityBox = function (data, data2) {
       "<br>"
   );
 
-  var tempString;
-  var uv = parseFloat(data2.current.uvi);
-  if (uv <= favorable) {
-    tempString = "class='uv-box uv-favorable'";
-  } else if (uv <= moderate) {
-    tempString = "class='uv-box uv-moderate'";
-  } else {
-    tempString = "class='uv-box uv-severe'";
+  if (uv !== null) {
+    // only show the uv index if we were able to get it
+    var tempString;
+    uv = parseFloat(uv);
+    if (uv <= favorable) {
+      tempString = "class='uv-box uv-favorable'";
+    } else if (uv <= moderate) {
+      tempString = "class='uv-box uv-moderate'";
+    } else {
+      tempString = "class='uv-box uv-severe'";
+    }
+    tempp.append("UV Index: " + "<span " + tempString + ">" + uv + "</span>");
   }
-  tempp.append("UV Index: " + "<span " + tempString + ">" + uv + "</span>");
   tempDiv.append(temph2);
   tempDiv.append(tempp);
   weatherBox.appendChild(tempDiv[0]); // The [0] gets the dom element
 };
 
-var makeForecast = function (data, data2) {
+var getDailyForecast = function (forecast) {
+  // the forecast comes in 3 hour steps, so pick the one closest to noon for each day after today
+  var offset = forecast.city.timezone;
+  var today = getLocalTime(moment().unix(), offset).format("YYYY-MM-DD");
+  var days = {};
+  for (x = 0; x < forecast.list.length; x++) {
+    var item = forecast.list[x];
+    var localTime = getLocalTime(item.dt, offset);
+    var day = localTime.format("YYYY-MM-DD");
+    var distance = Math.abs(localTime.hours() - 12);
+    if (day !== today && (!days[day] || distance < days[day].distance)) {
+      days[day] = { item: item, time: localTime, distance: distance };
+    }
+  }
+  return Object.keys(days)
+    .sort()
+    .slice(0, 5)
+    .map(function (day) {
+      return days[day];
+    });
+};
+
+var makeForecast = function (data, forecast) {
   // creates the forecast area and adds it to the page
   var tempDiv = $(document.createElement("div")).addClass("forecast-box");
   var tempDiv2 = $(document.createElement("div")).addClass("forecast-holder");
@@ -164,26 +207,26 @@ var makeForecast = function (data, data2) {
   temph3.text("5-Day Forecast:");
   tempDiv.append(temph3);
   tempDiv.append(tempDiv2);
-  currentTime.add(1, "days");
-  for (x = 1; x < 6; x++) {
+  var daily = getDailyForecast(forecast);
+  for (x = 0; x < daily.length; x++) {
+    var item = daily[x].item;
     var tempCard = $(document.createElement("div")).addClass("forecast-card");
     var tempp = $(document.createElement("p")).addClass("forecast-header");
-    tempp.text(currentTime.tz(data2.timezone).format("MM/DD/YYYY")); // get the current time of the city we are looking at
-    currentTime.add(1, "days"); // add 1 day to the time so the cards show different dates
+    tempp.text(daily[x].time.format("MM/DD/YYYY")); // the date in the city we are looking at
     var tempp2 = $(document.createElement("p")).addClass("forecast-text");
     tempp2.html(
-      getIcon(data2.daily[x].weather[0].icon) +
+      getIcon(item.weather[0].icon) +
         "<br>" +
         "Temp: " +
-        data2.daily[x].temp.day +
+        item.main.temp +
         " °F" +
         "<br>" +
         "Wind: " +
-        data2.daily[x].wind_speed +
+        item.wind.speed +
         " MPH" +
         "<br>" +
         "Humidity: " +
-        data2.daily[x].humidity +
+        item.main.humidity +
         "%" +
         "<br>"
     );
@@ -196,7 +239,7 @@ var makeForecast = function (data, data2) {
 };
 
 var getIcon = function (icon) {
- return "<img class='weather-img' src='http://openweathermap.org/img/wn/" + icon + "@2x.png'>";
+ return "<img class='weather-img' src='https://openweathermap.org/img/wn/" + icon + "@2x.png'>";
 };
 
 loadHistory(); // load the history when the page loads
