@@ -1,13 +1,16 @@
-var sButton = document.querySelector("#s-button");
 var iBox = document.querySelector("#input-box");
 var weatherBox = document.querySelector("#weather-section");
 var historyBox = document.querySelector("#search-history");
 var currentTime = moment();
 var searchHistory = [];
 
-$(sButton).click(function () {
-  // Fires when we click on the search button
-  var city = iBox.value; // Gets the value of the input box
+$("#search-box").submit(function (event) {
+  // Fires when we click on the search button or press enter
+  event.preventDefault();
+  var city = iBox.value.trim(); // Gets the value of the input box
+  if (!city) {
+    return;
+  }
   var apiUrl =
     "https://api.openweathermap.org/data/2.5/weather?q=" + // First fetch to get lat and lon + weather info
     city +
@@ -52,6 +55,8 @@ var getFetch = function (apiUrl) {
             makeForecast(data, results[0]);
             addHistory(data.name);
             saveHistory();
+            setActiveHistory(data.name);
+            iBox.value = "";
           })
           .catch(function (error) {
             console.log("Error: " + error.message);
@@ -103,6 +108,13 @@ var createHistoryButton = function (cityName, index) {
   historyBox.appendChild(tempButton[0]);
 };
 
+var setActiveHistory = function (cityName) {
+  // highlights the search history button for the city on screen
+  $(".sh-button").each(function () {
+    $(this).toggleClass("active", $(this).text() === cityName);
+  });
+};
+
 var saveHistory = function () {
   // saves the search history to local storage
   localStorage.setItem("search-history", JSON.stringify(searchHistory));
@@ -132,49 +144,67 @@ var makeCityBox = function (data, uv) {
   var moderate = 5;
   // severe I didnt need to add as I just test for over 5
 
-  var tempDiv = $(document.createElement("div")).addClass("weather-info");
-  var temph2 = $(document.createElement("h2"));
-  var tempp = $(document.createElement("p")).addClass("info-text");
+  var tempDiv = $(document.createElement("section")).addClass("weather-info");
+  var summary = $(document.createElement("div")).addClass("current-summary");
+  var stats = $(document.createElement("div")).addClass("info-text");
 
   weatherBox.innerHTML = ""; // Clears the current weather data/content on screen
-  temph2.html(
-    data.name + // city name
-      " (" +
-      getLocalTime(data.dt, data.timezone).format("MM/DD/YYYY") + // Gets the date in the locations timezone
-      ") " +
-      getIcon(data.weather[0].icon)
-  ); // get the current weather emoji
-  tempp.html(
-    "Temp: " +
-      data.main.temp +
-      " °F" +
-      "<br>" +
-      "Wind: " +
-      data.wind.speed +
-      " MPH" +
-      "<br>" +
-      "Humidity: " +
-      data.main.humidity +
-      "%" +
-      "<br>"
+  summary.append($("<h2 class='city-name'>").text(data.name + ", " + data.sys.country));
+  summary.append(
+    $("<p class='city-date'>").text(
+      getLocalTime(data.dt, data.timezone).format("dddd, MMMM D · h:mm A") // Gets the date in the locations timezone
+    )
   );
+  summary.append(
+    "<div class='current-main'>" +
+      "<span class='current-temp'>" +
+      Math.round(data.main.temp) +
+      "<sup>°F</sup></span>" +
+      getIcon(data.weather[0].icon) +
+      "</div>"
+  );
+  summary.append($("<p class='current-desc'>").text(data.weather[0].description));
+
+  stats.append(makeStat("Feels like", Math.round(data.main.feels_like) + "°F"));
+  stats.append(makeStat("Wind", Math.round(data.wind.speed) + " mph"));
+  stats.append(makeStat("Humidity", data.main.humidity + "%"));
 
   if (uv !== null) {
     // only show the uv index if we were able to get it
-    var tempString;
+    var uvClass;
+    var uvLabel;
     uv = parseFloat(uv);
     if (uv <= favorable) {
-      tempString = "class='uv-box uv-favorable'";
+      uvClass = "uv-favorable";
+      uvLabel = "Low";
     } else if (uv <= moderate) {
-      tempString = "class='uv-box uv-moderate'";
+      uvClass = "uv-moderate";
+      uvLabel = "Moderate";
     } else {
-      tempString = "class='uv-box uv-severe'";
+      uvClass = "uv-severe";
+      uvLabel = "High";
     }
-    tempp.append("UV Index: " + "<span " + tempString + ">" + uv + "</span>");
+    stats.append(
+      makeStat("UV index", Math.round(uv) + "<span class='uv-box " + uvClass + "'>" + uvLabel + "</span>")
+    );
   }
-  tempDiv.append(temph2);
-  tempDiv.append(tempp);
+  tempDiv.append(summary);
+  tempDiv.append(stats);
   weatherBox.appendChild(tempDiv[0]); // The [0] gets the dom element
+};
+
+var makeStat = function (label, value) {
+  // creates one of the small stat tiles in the city box
+  return (
+    "<div class='stat'>" +
+    "<p class='stat-label'>" +
+    label +
+    "</p>" +
+    "<p class='stat-value'>" +
+    value +
+    "</p>" +
+    "</div>"
+  );
 };
 
 var getDailyForecast = function (forecast) {
@@ -187,8 +217,18 @@ var getDailyForecast = function (forecast) {
     var localTime = getLocalTime(item.dt, offset);
     var day = localTime.format("YYYY-MM-DD");
     var distance = Math.abs(localTime.hours() - 12);
-    if (day !== today && (!days[day] || distance < days[day].distance)) {
-      days[day] = { item: item, time: localTime, distance: distance };
+    if (day === today) {
+      continue;
+    }
+    if (!days[day]) {
+      days[day] = { item: item, time: localTime, distance: distance, high: item.main.temp_max, low: item.main.temp_min };
+    }
+    days[day].high = Math.max(days[day].high, item.main.temp_max); // keep track of the high and low for the day
+    days[day].low = Math.min(days[day].low, item.main.temp_min);
+    if (distance < days[day].distance) {
+      days[day].item = item;
+      days[day].time = localTime;
+      days[day].distance = distance;
     }
   }
   return Object.keys(days)
@@ -204,42 +244,46 @@ var makeForecast = function (data, forecast) {
   var tempDiv = $(document.createElement("div")).addClass("forecast-box");
   var tempDiv2 = $(document.createElement("div")).addClass("forecast-holder");
   var temph3 = $(document.createElement("h3"));
-  temph3.text("5-Day Forecast:");
+  temph3.text("5-day forecast");
   tempDiv.append(temph3);
   tempDiv.append(tempDiv2);
   var daily = getDailyForecast(forecast);
   for (x = 0; x < daily.length; x++) {
     var item = daily[x].item;
     var tempCard = $(document.createElement("div")).addClass("forecast-card");
-    var tempp = $(document.createElement("p")).addClass("forecast-header");
-    tempp.text(daily[x].time.format("MM/DD/YYYY")); // the date in the city we are looking at
-    var tempp2 = $(document.createElement("p")).addClass("forecast-text");
-    tempp2.html(
-      getIcon(item.weather[0].icon) +
-        "<br>" +
-        "Temp: " +
-        item.main.temp +
-        " °F" +
-        "<br>" +
-        "Wind: " +
-        item.wind.speed +
-        " MPH" +
-        "<br>" +
-        "Humidity: " +
+    tempCard.html(
+      "<div>" +
+        "<p class='forecast-header'>" +
+        daily[x].time.format("dddd") + // the day in the city we are looking at
+        "</p>" +
+        "<p class='forecast-date'>" +
+        daily[x].time.format("MMM D") +
+        "</p>" +
+        "</div>" +
+        getIcon(item.weather[0].icon) +
+        "<p class='forecast-temps'>" +
+        Math.round(daily[x].high) +
+        "°" +
+        "<span class='forecast-low'>" +
+        Math.round(daily[x].low) +
+        "°</span>" +
+        "</p>" +
+        "<p class='forecast-text'>" +
+        "<span>💨 " +
+        Math.round(item.wind.speed) +
+        " mph</span>" +
+        "<span>💧 " +
         item.main.humidity +
-        "%" +
-        "<br>"
+        "%</span>" +
+        "</p>"
     );
-
-    tempCard.append(tempp);
-    tempCard.append(tempp2);
     tempDiv2.append(tempCard);
   }
   weatherBox.appendChild(tempDiv[0]);
 };
 
 var getIcon = function (icon) {
- return "<img class='weather-img' src='https://openweathermap.org/img/wn/" + icon + "@2x.png'>";
+  return "<img class='weather-img' alt='' src='https://openweathermap.org/img/wn/" + icon + "@2x.png'>";
 };
 
 loadHistory(); // load the history when the page loads
