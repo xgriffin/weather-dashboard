@@ -3,27 +3,171 @@ var weatherBox = document.querySelector("#weather-section");
 var historyBox = document.querySelector("#search-history");
 var currentTime = moment();
 var searchHistory = [];
+var suggestionBox = document.querySelector("#suggestions");
+var suggestions = []; // the cities currently shown in the dropdown
+var activeSuggestion = -1; // which dropdown item is highlighted, -1 means none
+var suggestTimer;
+var latestQuery = "";
 
 $("#search-box").submit(function (event) {
   // Fires when we click on the search button or press enter
   event.preventDefault();
+  if (activeSuggestion !== -1) {
+    // if a suggestion is highlighted, search for that exact city
+    selectSuggestion(activeSuggestion);
+    return;
+  }
   var city = iBox.value.trim(); // Gets the value of the input box
   if (!city) {
     return;
   }
+  closeSuggestions();
   var apiUrl =
     "https://api.openweathermap.org/data/2.5/weather?q=" + // First fetch to get lat and lon + weather info
-    city +
+    encodeURIComponent(city) +
     "&appid=ffa748d3a02711314373a2d30887317c" +
     "&units=imperial"; // returns the temp in f not kelvin
   getFetch(apiUrl);
 });
 
-var getFetch = function (apiUrl) {
+$(iBox).on("input", function () {
+  // waits until the user stops typing for a moment before looking up cities
+  clearTimeout(suggestTimer);
+  var query = iBox.value.trim();
+  if (query.length < 2) {
+    closeSuggestions();
+    return;
+  }
+  suggestTimer = setTimeout(function () {
+    getSuggestions(query);
+  }, 250);
+});
+
+$(iBox).on("keydown", function (event) {
+  // lets the user move through the dropdown with the arrow keys
+  if (!suggestions.length) {
+    return;
+  }
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    setActiveSuggestion((activeSuggestion + 1) % suggestions.length);
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    setActiveSuggestion(activeSuggestion <= 0 ? suggestions.length - 1 : activeSuggestion - 1);
+  } else if (event.key === "Escape") {
+    closeSuggestions();
+  }
+});
+
+$(suggestionBox).on("mousedown", ".suggestion", function (event) {
+  // mousedown instead of click so the input doesnt lose focus first
+  event.preventDefault();
+  selectSuggestion(parseInt($(this).attr("data-index")));
+});
+
+$(suggestionBox).on("mousemove", ".suggestion", function () {
+  setActiveSuggestion(parseInt($(this).attr("data-index")));
+});
+
+$(document).on("click", function (event) {
+  // closes the dropdown when clicking anywhere outside the search box
+  if (!$(event.target).closest("#search-box").length) {
+    closeSuggestions();
+  }
+});
+
+var getSuggestions = function (query) {
+  // looks up cities that match what the user has typed so far
+  latestQuery = query;
+  var geoUrl =
+    "https://geocoding-api.open-meteo.com/v1/search?name=" +
+    encodeURIComponent(query) +
+    "&count=6&language=en";
+  fetch(geoUrl)
+    .then(function (response) {
+      return response.json();
+    })
+    .then(function (data) {
+      if (query !== latestQuery || iBox.value.trim() !== query) {
+        return; // the user kept typing, so these results are out of date
+      }
+      showSuggestions(data.results || []);
+    })
+    .catch(function () {
+      closeSuggestions(); // suggestions are optional, so just hide them on errors
+    });
+};
+
+var showSuggestions = function (results) {
+  // builds the dropdown list of matching cities
+  suggestions = results;
+  activeSuggestion = -1;
+  suggestionBox.innerHTML = "";
+  if (!results.length) {
+    closeSuggestions();
+    return;
+  }
+  for (x = 0; x < results.length; x++) {
+    var place = [results[x].admin1, results[x].country].filter(Boolean).join(", "); // state or region and country
+    var item = $(document.createElement("li"))
+      .addClass("suggestion")
+      .attr({ id: "suggestion-" + x, role: "option", "data-index": x, "aria-selected": "false" });
+    item.append($("<span class='suggestion-name'>").text(results[x].name));
+    item.append($("<span class='suggestion-place'>").text(place));
+    suggestionBox.appendChild(item[0]);
+  }
+  suggestionBox.hidden = false;
+  iBox.setAttribute("aria-expanded", "true");
+};
+
+var setActiveSuggestion = function (index) {
+  // highlights one item in the dropdown
+  activeSuggestion = index;
+  $(".suggestion").each(function (i) {
+    $(this).toggleClass("active", i === index).attr("aria-selected", i === index ? "true" : "false");
+  });
+  if (index === -1) {
+    iBox.removeAttribute("aria-activedescendant");
+  } else {
+    iBox.setAttribute("aria-activedescendant", "suggestion-" + index);
+  }
+};
+
+var selectSuggestion = function (index) {
+  // gets the weather for the city the user picked using its exact location
+  var city = suggestions[index];
+  closeSuggestions();
+  var apiUrl =
+    "https://api.openweathermap.org/data/2.5/weather?lat=" +
+    city.latitude +
+    "&lon=" +
+    city.longitude +
+    "&appid=ffa748d3a02711314373a2d30887317c" +
+    "&units=imperial"; // returns the temp in f not kelvin
+  getFetch(apiUrl, city.name);
+};
+
+var closeSuggestions = function () {
+  // hides the dropdown
+  clearTimeout(suggestTimer);
+  latestQuery = "";
+  suggestions = [];
+  activeSuggestion = -1;
+  suggestionBox.hidden = true;
+  suggestionBox.innerHTML = "";
+  iBox.setAttribute("aria-expanded", "false");
+  iBox.removeAttribute("aria-activedescendant");
+};
+
+var getFetch = function (apiUrl, cityName) {
   // fetchs data and sends data to the creation functions
+  // cityName is optional and replaces the name openweather gives back, which can be a nearby neighborhood
   fetch(apiUrl).then(function (response) {
     if (response.ok) {
       response.json().then(function (data) {
+        if (cityName) {
+          data.name = cityName;
+        }
         var lon = parseFloat(data.coord.lon);
         var lat = parseFloat(data.coord.lat);
         var apiUrl2 =

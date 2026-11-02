@@ -26,8 +26,10 @@
           <circle cx="11" cy="11" r="7"></circle>
           <path d="M20 20l-3.5-3.5"></path>
         </svg>
-        <input id="input-box" type="text" placeholder="Search for a city" autocomplete="off">
+        <input id="input-box" type="text" placeholder="Search for a city" autocomplete="off" role="combobox"
+          aria-autocomplete="list" aria-expanded="false" aria-controls="suggestions">
         <button id="s-button" type="submit">Search</button>
+        <ul id="suggestions" role="listbox" aria-label="Matching cities" hidden></ul>
       </form>
     </header>
 
